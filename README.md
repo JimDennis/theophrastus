@@ -8,7 +8,7 @@ minimal application I can write that does anything "meaningful."
 I picked the name be scanning through the Google search results
 and the Wikipedia article for 
 [Message_in_a_bottle](http://en.wikipedia.org/wiki/Message_in_a_bottle)
-where there's an unreliably sourced claim that Theophrastus release
+where there's an unreliably sourced claim that Theophrastus released
 the "first recorded messages in bottle." (Let me know if you ever find
 a reliable citation supporting or refuting that claim).
 

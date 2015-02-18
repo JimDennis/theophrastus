@@ -23,34 +23,54 @@ def testpost(tst, url='http://localhost:8080/confirmation'):
     '''Post a test data
        Return error count (0 or 1) and request results (for debugging)
     '''
+    results = None
     err = 0
-    r = requests.post(url, data=tst)
-    if not r.ok:
-        print 'Not OK:', tst
+    r = None
+    try:
+        r = requests.post(url, data=tst)
+    except Exception, e:
+        results = 'Exception Raised for %s: %s' % (tst, e)
         err = 1
-    return (err, r)
+
+    if r and not r.ok:
+        results = 'Not OK: %s' % tst
+        err = 1
+    return (err, results)
 
 if __name__ == '__main__':
     import sys
+    from multiprocessing import Pool
+
     args = sys.argv[1:]
     num_tests = 1000
-    if args:
+    num_procs = 10
+    if len(args) > 0:
         try:
             num_tests = int(args[0])
         except ValueError, e:
             print >> sys.stderr, 'Unable to parse int(%s): %s' % (args[0], e)
+    if len(args) > 1:
+        try:
+            num_procs = int(args[1])
+        except ValueError, e:
+            print >> sys.stderr, 'Unable to parse int(%s): %s' % (args[1], e)
+
     tstsuite, gen_time = gen_test_data(num_tests)
 
-    err_count = 0
+    results = list()
+
     start = time.time()
-    for each in tstsuite:
-        err, _ = testpost(each)
-        err_count += err
+    pool = Pool(num_procs)
+    hammer = pool.imap(testpost, tstsuite)
+    for i in hammer:
+        results.append(i[0])
     elapsed = time.time() - start
+
+    err_count = sum(results)
 
     n = len(tstsuite)
     print 'Took %s seconds to generate %d tests' % (gen_time, n)
     print 'Took %s seconds to post %d tests (%g/second)' % (elapsed, n, n/elapsed)
     if err_count:
-        print 'There were %d error reported in testpost()' % err_count
+        print 'There were %d errors reported in testpost()' % err_count
 

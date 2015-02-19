@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-from bottle import get, post, redirect, request, route, run, template
-import time
+from bottle import post, redirect, request, route, run, template
 import sqlite3
 
 html = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
@@ -10,10 +9,10 @@ html = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 
 form = '''<form action="/confirmation" method="POST">
 Who shall I notify:
-<input type="text" name="name"><br>
-What is your message:
-<input type="text" name="message"><br>
-<input type="submit" value="Notify"> 
+<input type="text" name="name"><br />
+What is your message:<br />
+<textarea name="message" cols="80" rows="25">{{content}}</textarea><br />
+<input type="submit" value="Notify">
 </form>'''
 
 html_form = html % form
@@ -26,7 +25,7 @@ confirmation = '''
 
 html_confirmation = html % confirmation
 
-root = '''
+docroot = '''
 <p><h3>Current Notices:</h3></p>
 <table>
 <tr><th>Notice ID</th><th>Recipient</th><th>Date</th><th>Message</th></tr>
@@ -36,41 +35,49 @@ root = '''
   %for col in row:
     <td>{{col}}</td>
   %end
-    <td><a href="/close/{{id}}">close</a></td>
+    <td>
+    <form action="/close" method="POST">
+    <input type="submit" value="Close" />
+    <input name="entry" type="hidden" value="{{id}}" />
+    </form></td>
   </tr>
 %end
 </table>
 <p><h3><a href='/notify'>Send new notification</a></h3></p>'''
 
-html_root = html % root
+html_root = html % docroot
 
 @route('/')
 def root():
     vals = dict()
     vals['title'] = 'Notification System'
-    current = db.execute("SELECT id, name, postdate, SUBSTR(message,1,72) FROM notices WHERE closedate IS NULL ORDER BY id DESC")
+    get_entries = '''SELECT id, name, postdate, SUBSTR(message,1,72)
+      FROM notices WHERE closedate IS NULL ORDER BY id DESC LIMIT 40'''
+    current = db.execute(get_entries)
     rows = current.fetchall()
     vals['rows'] = rows
     return template(html_root, vals)
-    
+
 @route('/notify')
 def notify():
-    return template(html_form, title='Notify')
+    return template(html_form, title='Notify', content='')
 
 @route('/confirmation')
 def redir():
     redirect('/')
 
-@get('/close/<entry>')
-def close(entry):
-    row = db.execute("SELECT id, name, postdate, message, closedate FROM notices WHERE id=?", (entry,))
+@post('/close')
+def close():
+    entry = request.forms.get('entry')
+    chk = "SELECT id, name, postdate, message, closedate FROM notices WHERE id=?"
+    row = db.execute(chk, (entry,))
     if row:
         row = row.fetchone()
         if row[4] is not None:
-            return 'Entry was already closed on %s' % row[4]
+            return 'Entry %s was already closed on %s' % (row[0], row[4])
     else:
         return 'Bad entry: Cannot close'
-    newrow = db.execute("UPDATE notices set closedate=DATETIME('NOW') WHERE id=?", (entry,))
+    db.execute("UPDATE notices set closedate=DATETIME('NOW') WHERE id=?", (entry,))
     db.commit()
     return redirect('/')
 
@@ -88,8 +95,8 @@ def confirm():
 if __name__ == '__main__':
     db = sqlite3.connect('./notifications.db')
     prep_table = """
-      CREATE TABLE IF NOT EXISTS notices 
-        (id INTEGER PRIMARY KEY ASC AUTOINCREMENT, 
+      CREATE TABLE IF NOT EXISTS notices
+        (id INTEGER PRIMARY KEY ASC AUTOINCREMENT,
          name TEXT NOT NULL,
          message TEXT NOT NULL,
          postdate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

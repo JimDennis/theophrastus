@@ -30,4 +30,104 @@ libraries.
 `posttest.py` depends on Python [Requests](http://docs.python-requests.org/en/latest/)
 and [loremipsum](https://pypi.python.org/pypi/loremipsum/).
 
+Installation and Execution
+--------------------------
+
+Fetch the code using:
+
+```
+git clone https://github.com/JimDennis/theophrastus.git`
+```
+
+... ensure that you've installed the Python bottle module and then
+simply run:
+
+```
+./simple_form.py
+```
+
+Theophrastus will create a _./notifications.db_ (SQLite3) database
+in the current directory and create its **notices** table.  This
+datebase will be retained if you stop and restart the web app.
+
+From there you can visit the application with your browser on:
+[http://localhost:8080](http://localhost:8080/), post messages and
+view them, and "close" them.
+
+The home page simply shows a list of currently "open" notices with
+the message ID, intended recipient, the date/timestamp at which it
+was posted, and first line (up to 72 characters) of the message,
+and a "close" link for each. This is followed by a link to the 
+_/notify_ form to allow you to post new messages.  These database
+contents are displayed in descending order of ID ... most recent
+posting at the top.
+
+Closing a notification in Theophrastus simply sets a "closedate"
+timestamp for that given row and returns you to the app's root
+which will no longer display that message.
+
+You can access the database while `./simple_form.py` is running
+using commands like:
+
+```
+sqlite3 ./notifications.db 'select count(name),name from notices group by name order by count(name)'
+```
+
+(This example will produce a count of all notices addressed to each recipient, including
+open and closed entries)
+
+
+... and this:
+
+```
+sqlite3 ./notifications.db 'delete from notices where closedate is not null'
+``` 
+
+... will remove all closed notices from the system.
+
+You can also perform a "hot" backup of the database using:
+
+```
+sqlite3 ./notifications.db '.backup ./notifications.db.bak'
+```
+
+
+Performance Testing
+-------------------
+
+Theophrastus includes a very simple little performance and load testing script 
+`posttest.py` which will generate messages and post them to `simple_form.py`
+as quickly as possible.  It uses the _loremipsum_ module to generate messages
+and the _requests_ library for posting them.  It also hammers on the web server
+from multiple concurrent processes using _multiprocessing.Pool_ from the standard
+libraries.
+
+You can all `posttest.py` with no arguments to accept the default (1000 notices
+posted from 10 processes) or you can call it with arguments for num_tests and
+num_procs like so:
+
+``` 
+./posttest.py 1000 20
+``` 
+
+... which will hammer on the server with 1000 messages from 20 processes. 
+
+`posttest.py` will then print a result like:
+
+``` 
+Took 0.0632388591766 seconds to generate 1000 tests
+Took 1.88870716095 seconds to post 1000 tests (529.463/second)
+There were 64 errors reported in testpost()
+``` 
+
+This very simple test counts all errors; any exceptions raised by the call
+to _requests.post()_ (mostly"connection refused") as well as any results
+which were returned but not "ok").
+
+A more thorough testing utility would interleave some read traffic in with
+the new message postings, of course.  But this test is reasonable for ensure
+that new code changes don't catastrophically impact performance.
+
+(Hmmm: should we create a new table in the notifications.db and post perf
+test results to that?)
 

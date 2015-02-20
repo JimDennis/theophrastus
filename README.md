@@ -115,8 +115,8 @@ num_procs like so:
 `posttest.py` will then print a result like:
 
 ``` 
-Took 0.0632388591766 seconds to generate 1000 tests
-Took 1.88870716095 seconds to post 1000 tests (529.463/second)
+Took 0.06 seconds to generate 1000 tests
+Took 1.88 seconds to post 1000 tests (529.463/second)
 There were 64 errors reported in testpost()
 ``` 
 

@@ -69,8 +69,8 @@ if __name__ == '__main__':
     err_count = sum(results)
 
     n = len(tstsuite)
-    print 'Took %s seconds to generate %d tests' % (gen_time, n)
-    print 'Took %s seconds to post %d tests (%g/second)' % (elapsed, n, n/elapsed)
+    print 'Took %0.2g seconds to generate %d tests' % (gen_time, n)
+    print 'Took %0.2g seconds to post %d tests (%0.2g/second)' % (elapsed, n, n/elapsed)
     if err_count:
         print 'There were %d errors reported in testpost()' % err_count
 

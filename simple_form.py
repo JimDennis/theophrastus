@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''Simple "message in a bottle" application
 '''
-from bottle import post, redirect, request, route, run, template
+from bottle import debug, post, redirect, request, route, run, template
 import sqlite3
 
 html = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
@@ -45,7 +45,8 @@ docroot = '''
   </tr>
 %end
 </table>
-<p><h3><a href='/notify'>Send new notification</a></h3></p>'''
+<p><h3>{{!prev}}<a href='/notify'>Send new notification</a>{{!next}}</h3></p>
+{{!pages}}'''
 
 html_root = html % docroot
 
@@ -66,16 +67,22 @@ class Model(object):
              closedate DATETIME DEFAULT NULL)"""
         self.db.execute(prep_table)
         self.db.commit()
+    def get_open_entry_count(self):
+        '''Return count for all open entries'''
+        qry = 'SELECT COUNT(id) FROM notices WHERE closedate IS NULL'
+        return self.db.execute(qry).fetchone()[0]
     def get_open_entries(self, count=20, offset=0, width=72):
         '''Get some of the open entries and summary of the contents
            Defaults are suitable for the default index/root page
         '''
+        offset = offset * count
         get_entries = '''SELECT id, name, postdate, SUBSTR(message, 1, ?)
           FROM notices WHERE closedate IS NULl ORDER BY id DESC
           LIMIT ? OFFSET ?'''
         args = (width, count, offset)
         current = self.db.execute(get_entries, args)
-        return current.fetchall()
+        pagecount = int(self.get_open_entry_count() / count)
+        return (current.fetchall(), pagecount)
     def create_entry(self, name, message):
         '''Create a new "open" entry
         '''
@@ -99,25 +106,42 @@ class Model(object):
         return 'Entry_%s_closed' % row[0]
 
 @route('/')
-def root():
+@route('/<page:int>')
+def root(page=0):
+    if page is None:
+        page = 0
     vals = dict()
     vals['title'] = 'Notification System'
-    vals['rows'] = model.get_open_entries()
+    vals['rows'], pagemax = model.get_open_entries(offset=page)
+    if pagemax > 1:
+        vals['pages'] = '<p>%s of %s pages</p>' % (page, pagemax)
+    else:
+        vals['pages'] = ''
+    if page < 1:
+        vals['prev'] = '&lt;&lt;&nbsp;&nbsp;'
+    else:
+        prev = max(0, page - 1)
+        vals['prev'] = '<a href="/%s">&lt;&lt;</a>&nbsp;&nbsp;' % (prev)
+    if page > pagemax - 1:
+        vals['next'] = '&nbsp;&nbsp;&gt;&gt;'
+    else:
+        nxt = min(pagemax, page + 1)
+        vals['next'] = '&nbsp;&nbsp;<a href="/%s">&gt;&gt;</a>' % (nxt)
     return template(html_root, vals)
 
 @route('/notify')
 def notify():
     return template(html_form, title='Notify', content='')
 
-@route('/confirmation')
-def redir():
-    redirect('/')
-
 @post('/close')
 def close():
     entry = request.forms.get('entry')
     result = model.close_entry(entry)
     return redirect('/?result=%s' % result)
+
+@route('/confirmation')
+def redir():
+    redirect('/')
 
 @post('/confirmation')
 def confirm():
@@ -130,5 +154,6 @@ def confirm():
 
 if __name__ == '__main__':
     model = Model()
-    run(host='localhost', port=8080, debug=True)
+    debug(True)
+    run(host='localhost', port=8080)
 

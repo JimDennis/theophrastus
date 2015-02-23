@@ -4,12 +4,12 @@
 from bottle import debug, post, redirect, request, route, run, template
 import sqlite3
 
-html = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
+HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 <body>
 %s
 </body></html>'''
 
-form = '''<form action="/confirmation" method="POST">
+FORM = '''<form action="/confirmation" method="POST">
 Who shall I notify:
 <input type="text" name="name"><br />
 What is your message:<br />
@@ -17,17 +17,17 @@ What is your message:<br />
 <input type="submit" value="Notify">
 </form>'''
 
-html_form = html % form
+HTML_FORM = HTML % FORM
 
-confirmation = '''
+CONFIRMATION = '''
 <p>{{name}} has been been sent message ID {{id}}:
 <blockquote>{{message}}
 </blockquote>
 <a href="/">Done</a>'''
 
-html_confirmation = html % confirmation
+HTML_CONFIRMATION = HTML % CONFIRMATION
 
-docroot = '''
+DOCROOT = '''
 <p><h3>Current Notices:</h3></p>
 <table>
 <tr><th>Notice ID</th><th>Recipient</th><th>Date</th><th>Message</th></tr>
@@ -48,7 +48,7 @@ docroot = '''
 <p><h3>{{!prev}}<a href='/notify'>Send new notification</a>{{!next}}</h3></p>
 {{!pages}}'''
 
-html_root = html % docroot
+HTML_ROOT = HTML % DOCROOT
 
 class Model(object):
     '''Maintain the DB for notifications
@@ -108,6 +108,7 @@ class Model(object):
 @route('/')
 @route('/<page:int>')
 def root(page=0):
+    '''App/Doc Root page: show open incidents and link to new entry form'''
     if page is None:
         page = 0
     vals = dict()
@@ -127,30 +128,34 @@ def root(page=0):
     else:
         nxt = min(pagemax, page + 1)
         vals['next'] = '&nbsp;&nbsp;<a href="/%s">&gt;&gt;</a>' % (nxt)
-    return template(html_root, vals)
+    return template(HTML_ROOT, vals)
 
 @route('/notify')
 def notify():
-    return template(html_form, title='Notify', content='')
+    '''New notification entry form'''
+    return template(HTML_FORM, title='Notify', content='')
 
 @post('/close')
 def close():
+    '''Set closed date on some entry and return to app/doc root page'''
     entry = request.forms.get('entry')
     result = model.close_entry(entry)
     return redirect('/?result=%s' % result)
 
 @route('/confirmation')
 def redir():
+    '''After confirmation, return to app/doc root page'''
     redirect('/')
 
 @post('/confirmation')
 def confirm():
+    '''Interstial page to confirm new entry'''
     vals = dict()
     vals['title'] = 'Confirmation'
     vals['name'] = request.forms.get('name')
     vals['message'] = request.forms.get('message')
     vals['id'] = model.create_entry(vals['name'], vals['message'])
-    return template(html_confirmation, vals)
+    return template(HTML_CONFIRMATION, vals)
 
 if __name__ == '__main__':
     model = Model()

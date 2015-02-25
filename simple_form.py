@@ -2,7 +2,7 @@
 '''Simple "message in a bottle" application
 '''
 from bottle import debug, post, redirect, request, route, run, template
-import sqlite3
+import sqlite3, subprocess, time
 
 HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 <body>
@@ -157,8 +157,46 @@ def confirm():
     vals['id'] = model.create_entry(vals['name'], vals['message'])
     return template(HTML_CONFIRMATION, vals)
 
+
+class Command(object):
+    '''Collection of commands to be invoked from the command line
+       These should all be static methods
+    '''
+
+    @staticmethod
+    def call(cmd, *args, **opts):
+        '''If it's a callable then call it'''
+        if hasattr(Command, cmd):
+            func = getattr(Command, cmd)
+            if callable(func):
+                return func(*args, **opts)
+        return 'Unknown command'
+
+    @staticmethod
+    def backup(filename='notifications.db.bak'):
+        '''Call sqlite3 .backup command to perform a backup of the DB'''
+        filename = '%s.%s' % (filename, int(time.time()))
+        cmd = ['sqlite3', '-batch', 'notifications.db', '.backup %s' % filename]
+        try:
+            retval = subprocess.call(cmd)
+        except EnvironmentError, e:
+            return (127, 'Unable to execute sqlite3: %s' % e)
+        if retval:
+            return (retval, 'Some error occurred: %s' % retval)
+        else:
+            return (retval, 'Success')
+
+
 if __name__ == '__main__':
-    model = Model()
-    debug(True)
-    run(host='localhost', port=8080)
+    import sys
+    arguments = sys.argv[1:]
+    if not arguments:  # Start service
+        model = Model()
+        debug(True)
+        run(host='localhost', port=8080)
+    else:
+        command, line = arguments[0], arguments[1:]
+        exitval, msg = Command.call(command, *line)
+        print >> sys.stderr, msg
+        sys.exit(exitval)
 

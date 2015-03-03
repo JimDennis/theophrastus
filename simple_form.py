@@ -53,6 +53,7 @@ HTML_ROOT = HTML % DOCROOT
 class Model(object):
     '''Maintain the DB for notifications
     '''
+    schema_version = 1
     def __init__(self, dbfile='./notifications.db'):
         '''Create table if necessary otherwise use existing data
         '''
@@ -67,6 +68,7 @@ class Model(object):
              closedate DATETIME DEFAULT NULL)"""
         self.db.execute(prep_table)
         self.db.commit()
+        self.check_schema()
     def get_open_entry_count(self):
         '''Return count for all open entries'''
         qry = 'SELECT COUNT(id) FROM notices WHERE closedate IS NULL'
@@ -103,7 +105,35 @@ class Model(object):
             return 'Bad entry: Cannot close'
         self.db.execute("UPDATE notices set closedate=DATETIME('NOW') WHERE id=?", (entry,))
         self.db.commit()
-        return 'Entry_%s_closed' % row[0]
+        return 'Entry_%s_closed' % row[0]  ## TODO: implement better return value here
+
+    def check_schema(self):
+        '''Check schema against self
+        '''
+        mk_table = '''CREATE TABLE IF NOT EXISTS versions
+                      (component TEXT UNIQUE NOT NULL, version INTEGER NOT NULL)'''
+        self.db.execute(mk_table) # Fire and forget
+        self.db.commit()
+        chk_version = "SELECT version FROM versions WHERE component = 'schema'"
+        ver = self.db.execute(chk_version).fetchall()
+        if not ver or ver[0] < Model.schema_version:
+            self.migrate()
+
+    def migrate(self):
+        '''Upgrade DB schema
+           (Must upgrade this and Model.schema_version for new schema)
+        '''
+        add_parent_col = 'ALTER TABLE notices ADD COLUMN parent_id INTEGER'
+        set_new_version = '''INSERT OR REPLACE INTO versions (component, version)
+                             VALUES ('schema', 1)'''
+        try:
+            self.db.execute(add_parent_col)
+            self.db.execute(set_new_version)
+            self.db.commit()
+        except sqlite3.Error:
+            return False  ## TODO: what do we do here?  Log error?
+        return True
+
 
 @route('/')
 @route('/<page:int>')

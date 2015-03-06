@@ -71,16 +71,24 @@ class Model(object):
         self.check_schema()
     def get_open_entry_count(self):
         '''Return count for all open entries'''
-        qry = 'SELECT COUNT(id) FROM notices WHERE closedate IS NULL'
+        qry = '''SELECT COUNT(id) FROM notices
+                  WHERE parent_id IS NULL AND closedate IS NULL'''
         return self.db.execute(qry).fetchone()[0]
     def get_open_entries(self, count=20, offset=0, width=72):
-        '''Get some of the open entries and summary of the contents
+        '''Get tails of some open threads and summary of the contents
            Defaults are suitable for the default index/root page
         '''
         offset = offset * count
-        get_entries = '''SELECT id, name, postdate, SUBSTR(message, 1, ?)
-          FROM notices WHERE closedate IS NULl ORDER BY id DESC
-          LIMIT ? OFFSET ?'''
+        get_entries = '''
+            WITH RECURSIVE tree (id, parent_id, name, message, root_id ) AS (
+                SELECT id, parent_id, name, message, id AS root_id FROM notices
+                  WHERE parent_id IS NULL AND closedate IS NULL
+                UNION
+                SELECT t1.id, t1.parent_id, t1.name, t1.message, root_id
+                  FROM notices AS t1
+                  JOIN tree on tree.id = t1.parent_id
+            ) SELECT MAX(id), name, SUBSTR(message, 1, ?) FROM tree GROUP BY root_id
+            LIMIT ? OFFSET ?'''
         args = (width, count, offset)
         current = self.db.execute(get_entries, args)
         pagecount = int(self.get_open_entry_count() / count)
@@ -92,20 +100,53 @@ class Model(object):
         newrow = self.db.execute(stmt, (name, message))
         self.db.commit()
         return newrow.lastrowid
-    def close_entry(self, entry):
+
+    def get_thread_entries(self, entry):
+        '''Get all messages IDs from one thread given any id therein
+        '''
+        qry_get_thread = '''
+            WITH RECURSIVE tree (id, parent_id) AS (
+              SELECT id, parent_id FROM notices WHERE id = (
+                WITH RECURSIVE t3 (id, parent_id) AS (
+                  SELECT id, parent_id FROM notices WHERE id = ?
+                  UNION ALL
+                  SELECT t2.id, t2.parent_id FROM notices AS t2
+                    JOIN t3 ON t3.parent_id=t2.id
+                  ) SELECT id FROM t3 WHERE parent_id IS NULL
+              ) UNION ALL
+              SELECT t2.id, t2.parent_id FROM notices AS t2
+                JOIN tree ON tree.id = t2.parent_id
+             ) SELECT id FROM tree'''
+        results = self.db.execute(qry_get_thread, (entry,))
+        if results is not None:
+            results = results.fetchall()
+        else:
+            results = list()
+        return results
+
+    def close_thread(self, entry):
         '''Mark a entry as "closed" (set a closing date on it)
         '''
-        chk = "SELECT id, name, postdate, message, closedate FROM notices WHERE id=?"
-        row = self.db.execute(chk, (entry,))
+        qry_chk = "SELECT id, name, postdate, message, closedate FROM notices WHERE id=?"
+        qry_close = "UPDATE notices SET closedate=DATETIME('NOW') WHERE id IN (%s)"
+        ## SQLite doesn't parameterize IN sequences
+        ## So we'll use this hack courtesy of Alex Martelli:
+        ##  http://stackoverflow.com/a/1310001/149076
+        row = self.db.execute(qry_chk, (entry,))
         if row:
             row = row.fetchone()
             if row[4] is not None:
-                return 'Entry %s was already closed on %s' % (row[0], row[4])
+                return 'Thread containing %s was already closed on %s' \
+                   % (row[0], row[4])
         else:
             return 'Bad entry: Cannot close'
-        self.db.execute("UPDATE notices set closedate=DATETIME('NOW') WHERE id=?", (entry,))
+        entry_list = self.get_thread_entries(entry)
+        if len(entry_list):
+            entry_list = tuple([x[0] for x in entry_list])
+            qry = qry_close % ','.join('?'*len(entry_list))
+            self.db.execute(qry, entry_list)
         self.db.commit()
-        return 'Entry_%s_closed' % row[0]  ## TODO: implement better return value here
+        return 'Thread_%s_closed' % row[0]  ## TODO: implement better return value here
 
     def check_schema(self):
         '''Check schema against self
@@ -144,8 +185,8 @@ def root(page=0):
     vals = dict()
     vals['title'] = 'Notification System'
     vals['rows'], pagemax = model.get_open_entries(offset=page)
-    if pagemax > 1:
-        vals['pages'] = '<p>%s of %s pages</p>' % (page, pagemax)
+    if pagemax > 0:
+        vals['pages'] = '<p>%s of %s pages</p>' % (page+1, pagemax+1)
     else:
         vals['pages'] = ''
     if page < 1:
@@ -169,7 +210,7 @@ def notify():
 def close():
     '''Set closed date on some entry and return to app/doc root page'''
     entry = request.forms.get('entry')
-    result = model.close_entry(entry)
+    result = model.close_thread(entry)
     return redirect('/?result=%s' % result)
 
 @route('/confirmation')

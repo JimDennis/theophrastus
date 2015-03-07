@@ -30,12 +30,13 @@ HTML_CONFIRMATION = HTML % CONFIRMATION
 DOCROOT = '''
 <p><h3>Current Notices:</h3></p>
 <table>
-<tr><th>Notice ID</th><th>Recipient</th><th>Date</th><th>Message</th></tr>
+<tr><th>Notice ID</th><th>From</th><th>Date</th><th>Subject</th></tr>
 %for row in rows:
   %id=row[0]
   <tr>
   %for col in row:
-    <td>{{col}}</td>
+    %this=str(col)[:width]
+    <td>{{this}}</td>
   %end
     <td>
     <form action="/close" method="POST">
@@ -49,6 +50,31 @@ DOCROOT = '''
 {{!pages}}'''
 
 HTML_ROOT = HTML % DOCROOT
+
+VIEW_THREAD = '''
+<p><h3>Thread for {{root_entry}}:</h3></p>
+<p>
+<table>
+<tr><th>ID</th>
+<th>Posted</th>
+<th>Closed</th>
+<th>From</th>
+<th>Subject</th></tr>
+%for row in rows:
+  %id      = row[0]
+  %posted  = row[1]
+  %closed  = row[2] if row[2] is not None else ""
+  %name    = row[3]
+  %subj     = row[4][:width]
+  %indent  = "&nbsp;" * min(row[5], 20)
+<tr><td align="right">{{id}}</td><td>{{posted}}</td><td>{{closed}}</td>
+    <td>{{name}}</td><td>{{!indent}}{{subj}}</td></tr>
+%end
+</table>
+<br /></p>
+'''
+
+VIEW_THREAD = HTML % VIEW_THREAD
 
 class Model(object):
     '''Maintain the DB for notifications
@@ -74,7 +100,7 @@ class Model(object):
         qry = '''SELECT COUNT(id) FROM notices
                   WHERE parent_id IS NULL AND closedate IS NULL'''
         return self.db.execute(qry).fetchone()[0]
-    def get_open_entries(self, count=20, offset=0, width=72):
+    def get_open_entries(self, count=20, offset=0):
         '''Get tails of some open threads and summary of the contents
            Defaults are suitable for the default index/root page
         '''
@@ -87,9 +113,9 @@ class Model(object):
                 SELECT t1.id, t1.parent_id, t1.name, t1.message, root_id
                   FROM notices AS t1
                   JOIN tree on tree.id = t1.parent_id
-            ) SELECT MAX(id), name, SUBSTR(message, 1, ?) FROM tree GROUP BY root_id
+            ) SELECT MAX(id), name, message FROM tree GROUP BY root_id
             LIMIT ? OFFSET ?'''
-        args = (width, count, offset)
+        args = (count, offset)
         current = self.db.execute(get_entries, args)
         pagecount = int(self.get_open_entry_count() / count)
         return (current.fetchall(), pagecount)
@@ -105,8 +131,12 @@ class Model(object):
         '''Get all messages IDs from one thread given any id therein
         '''
         qry_get_thread = '''
-            WITH RECURSIVE tree (id, parent_id) AS (
-              SELECT id, parent_id FROM notices WHERE id = (
+            WITH RECURSIVE tree
+               (id, parent_id, postdate, closedate, name, message,
+                depth, path) AS (
+              SELECT id, parent_id, postdate, closedate, name,
+                message, 1 AS depth, '' AS path FROM notices
+              WHERE id = (
                 WITH RECURSIVE t3 (id, parent_id) AS (
                   SELECT id, parent_id FROM notices WHERE id = ?
                   UNION ALL
@@ -114,9 +144,12 @@ class Model(object):
                     JOIN t3 ON t3.parent_id=t2.id
                   ) SELECT id FROM t3 WHERE parent_id IS NULL
               ) UNION ALL
-              SELECT t2.id, t2.parent_id FROM notices AS t2
+              SELECT t2.id, t2.parent_id, t2.postdate, t2.closedate,
+               t2.name, t2.message, depth + 1,
+               path || '/' || CAST(t2.id AS VARCHAR) FROM notices AS t2
                 JOIN tree ON tree.id = t2.parent_id
-             ) SELECT id FROM tree'''
+             ) SELECT id, postdate, closedate, name, message, depth
+               FROM tree ORDER BY path'''
         results = self.db.execute(qry_get_thread, (entry,))
         if results is not None:
             results = results.fetchall()
@@ -184,6 +217,7 @@ def root(page=0):
         page = 0
     vals = dict()
     vals['title'] = 'Notification System'
+    vals['width'] = 72  ## TODO: consolidate this sort of thing
     vals['rows'], pagemax = model.get_open_entries(offset=page)
     if pagemax > 0:
         vals['pages'] = '<p>%s of %s pages</p>' % (page+1, pagemax+1)
@@ -228,6 +262,16 @@ def confirm():
     vals['id'] = model.create_entry(vals['name'], vals['message'])
     return template(HTML_CONFIRMATION, vals)
 
+@route('/thread/<entry:int>')
+def view_thread(entry):
+    '''View thread associated with some entry'''
+    entries = model.get_thread_entries(entry)
+    vals = dict()
+    vals['rows'] = entries[:]
+    vals['root_entry'] = entries[0][0]
+    vals['title'] = 'View Thread %s' % vals['root_entry']
+    vals['width'] = 72
+    return template(VIEW_THREAD, vals)
 
 class Command(object):
     '''Collection of commands to be invoked from the command line

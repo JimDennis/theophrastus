@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 '''Simple "message in a bottle" application
 '''
-from bottle import debug, post, redirect, request, route, run, template
-import sqlite3, subprocess, time
+from bottle import debug, post, redirect, request, response, route, run, template, static_file
+import ConfigParser, sqlite3, subprocess, time
 
 HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 <body>
 %s
-</body></html>'''
+</body>
+</html>'''
 
 FORM = '''<form action="/confirmation" method="POST">
 Who shall I notify:
@@ -20,10 +21,16 @@ What is your message:<br />
 HTML_FORM = HTML % FORM
 
 CONFIRMATION = '''
-<p>{{name}} has been been sent message ID {{id}}:
+<script type="text/javascript">
+alert("{{name}} has sent message ID {{id}}")
+window.location.replace("/")
+</script>
+<noscript>
+<p>{{name}} has sent message ID {{id}}:
 <blockquote>{{message}}
 </blockquote>
-<a href="/">Done</a>'''
+<a href="/">Done</a>
+</noscript>'''
 
 HTML_CONFIRMATION = HTML % CONFIRMATION
 
@@ -47,6 +54,7 @@ DOCROOT = '''
 %end
 </table>
 <p><h3>{{!prev}}<a href='/notify'>Send new notification</a>{{!next}}</h3></p>
+{{session}}
 {{!pages}}'''
 
 HTML_ROOT = HTML % DOCROOT
@@ -75,6 +83,18 @@ VIEW_THREAD = '''
 '''
 
 VIEW_THREAD = HTML % VIEW_THREAD
+
+LOGIN_FORM = '''
+<p>
+<form action="/login" method="POST">
+User name:
+<input type="text" name="name"><br />
+Password:
+<input type="text" name="pass"><br />
+<input type="submit" value="Login">
+</form>'''
+
+LOGIN_FORM = HTML % LOGIN_FORM
 
 class Model(object):
     '''Maintain the DB for notifications
@@ -219,6 +239,7 @@ def root(page=0):
     vals['title'] = 'Notification System'
     vals['width'] = 72  ## TODO: consolidate this sort of thing
     vals['rows'], pagemax = model.get_open_entries(offset=page)
+    vals['session'] = request.get_cookie('session', '[No Session]')
     if pagemax > 0:
         vals['pages'] = '<p>%s of %s pages</p>' % (page+1, pagemax+1)
     else:
@@ -273,6 +294,32 @@ def view_thread(entry):
     vals['width'] = 72
     return template(VIEW_THREAD, vals)
 
+@route('/static/<file>')
+def static(file):
+    return static_file(file, root='./static')
+
+@route('/login')
+def login():
+    '''Present Login form'''
+    return template(LOGIN_FORM, title='Login', content='')
+
+@post('/login')
+def login():
+    '''Process Login and set a cookie'''
+    auth = False
+    try:
+        name = request.forms.get('name')
+        pssd = request.forms.get('pass')
+        if name: # No empty names allowed:
+            auth = authenticate(name, pssd)
+    except Exception, e:
+        pass
+    if auth:
+        response.set_cookie('session', str(auth))
+        return redirect('/')
+    return template(LOGIN_FORM, title='Login', content='')
+
+
 class Command(object):
     '''Collection of commands to be invoked from the command line
        These should all be static methods
@@ -303,7 +350,43 @@ class Command(object):
 
 
 if __name__ == '__main__':
-    import sys
+    import sys, os
+
+    config = ConfigParser.ConfigParser()
+    if 'BOTTLECFG' not in os.environ:
+        print >> sys.stderr, 'Warning: no configuration specified in environ'
+        ini = './settings.ini'
+    else:
+        ini = os.environ['BOTTLECFG']
+    read = config.read(ini)
+    if not read:
+        print >> sys.stderr, 'Warning: no configuration read'
+        sys.exit(127)
+    read = read[0]
+
+    try:
+        authmod = config.get('Auth', 'module')
+        cookie_nonce = config.get('Auth', 'cookie_nonce')
+    except ConfigParser.Error, e:
+        print >> sys.stderr, 'Configuration Error in %s: %s' % (read, e)
+        sys.exit(127)
+
+    if authmod.endswith('.py'):
+        authmod = authmod[:-3]
+
+    try:
+        auth = __import__(authmod, 'auth')
+    except ImportError, e:
+        print >> sys.stderr, 'Unable to import module %s: %s' % (authmod, e)
+        sys.exit(127)
+
+    if hasattr(auth, 'Auth') and callable(auth.Auth):
+        session_mgr = auth.Auth(read)  # Called with the config file we have loaded
+        authenticate = session_mgr.authenticate
+    else:
+        print >> sys.stderr, 'Warning: no init() in module %s' % authmod
+        authenticate = lambda x, y: False
+
     arguments = sys.argv[1:]
     if not arguments:  # Start service
         model = Model()

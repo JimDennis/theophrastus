@@ -66,6 +66,9 @@ provide HTML controls to page through them at the bottom.
 These database contents (threads) are displayed in descending order of
 ID ... most recent posting at the top.
 
+Clicking on the "From" or the subject of any thread's tail will bring
+up a view of the entire thread and the full text of that message.
+
 Closing a notification in Theophrastus simply sets a "closedate"
 timestamp for all messages in that thread, and returns you to the app's
 root which will no longer display that message.
@@ -91,10 +94,6 @@ Currently the authentication only sets a cookie.  Support will be added
 to record users and perhaps to provide a view for users to see only
 the notice threads which they initiated or to which they've posted
 updates.
-
-It's also possible to see a message thread, in threaded view form, by
-accessing the ReST URL .../thread/XX --- URL.  (This is not yet exposed
-via the UI).
 
 Also note that some support for Javascript alert boxes, interstitials,
 has been added.

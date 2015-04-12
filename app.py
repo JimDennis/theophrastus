@@ -13,6 +13,8 @@ HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 FORM = '''<form action="/confirmation" method="POST">
 Who shall I notify:
 <input type="text" name="name"><br />
+Subject:
+<input type="text" name="subject"><br />
 What is your message:<br />
 <textarea name="message" cols="80" rows="25">{{content}}</textarea><br />
 <input type="submit" value="Notify">
@@ -43,7 +45,7 @@ DOCROOT = '''
   <tr>
   %for col in row:
     %this=str(col)[:width]
-    <td>{{this}}</td>
+    <td><a href="/thread/{{id}}">{{this}}</a></td>
   %end
     <td>
     <form action="/close" method="POST">
@@ -79,6 +81,10 @@ VIEW_THREAD = '''
     <td>{{name}}</td><td>{{!indent}}{{subj}}</td></tr>
 %end
 </table>
+<h2>Message {{id}} Contents:</h2>
+<blockquote>
+{{message}}
+</blockquote>
 <br /></p>
 '''
 
@@ -99,7 +105,8 @@ LOGIN_FORM = HTML % LOGIN_FORM
 class Model(object):
     '''Maintain the DB for notifications
     '''
-    schema_version = 1
+    schema_version = 2  # 2 add subject to schema
+
     def __init__(self, dbfile='./notifications.db'):
         '''Create table if necessary otherwise use existing data
         '''
@@ -109,41 +116,45 @@ class Model(object):
           CREATE TABLE IF NOT EXISTS notices
             (id INTEGER PRIMARY KEY ASC AUTOINCREMENT,
              name TEXT NOT NULL,
+             subject TEXT NOT NULL,
              message TEXT NOT NULL,
              postdate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
              closedate DATETIME DEFAULT NULL)"""
         self.db.execute(prep_table)
         self.db.commit()
         self.check_schema()
+
     def get_open_entry_count(self):
         '''Return count for all open entries'''
         qry = '''SELECT COUNT(id) FROM notices
                   WHERE parent_id IS NULL AND closedate IS NULL'''
         return self.db.execute(qry).fetchone()[0]
+
     def get_open_entries(self, count=20, offset=0):
         '''Get tails of some open threads and summary of the contents
            Defaults are suitable for the default index/root page
         '''
         offset = offset * count
         get_entries = '''
-            WITH RECURSIVE tree (id, parent_id, name, message, root_id ) AS (
-                SELECT id, parent_id, name, message, id AS root_id FROM notices
+            WITH RECURSIVE tree (id, parent_id, name, subject, root_id ) AS (
+                SELECT id, parent_id, name, subject, id AS root_id FROM notices
                   WHERE parent_id IS NULL AND closedate IS NULL
                 UNION
-                SELECT t1.id, t1.parent_id, t1.name, t1.message, root_id
+                SELECT t1.id, t1.parent_id, t1.name, t1.subject, root_id
                   FROM notices AS t1
                   JOIN tree on tree.id = t1.parent_id
-            ) SELECT MAX(id), name, message FROM tree GROUP BY root_id
+            ) SELECT MAX(id), name, subject FROM tree GROUP BY root_id
             LIMIT ? OFFSET ?'''
         args = (count, offset)
         current = self.db.execute(get_entries, args)
         pagecount = int(self.get_open_entry_count() / count)
         return (current.fetchall(), pagecount)
-    def create_entry(self, name, message):
+
+    def create_entry(self, name, subject, message):
         '''Create a new "open" entry
         '''
-        stmt = "INSERT INTO notices (name, message) VALUES (?, ?)"
-        newrow = self.db.execute(stmt, (name, message))
+        stmt = "INSERT INTO notices (name, subject, message) VALUES (?, ?, ?)"
+        newrow = self.db.execute(stmt, (name, subject, message))
         self.db.commit()
         return newrow.lastrowid
 
@@ -152,10 +163,10 @@ class Model(object):
         '''
         qry_get_thread = '''
             WITH RECURSIVE tree
-               (id, parent_id, postdate, closedate, name, message,
+               (id, parent_id, postdate, closedate, name, subject,
                 depth, path) AS (
               SELECT id, parent_id, postdate, closedate, name,
-                message, 1 AS depth, '' AS path FROM notices
+                subject, 1 AS depth, '' AS path FROM notices
               WHERE id = (
                 WITH RECURSIVE t3 (id, parent_id) AS (
                   SELECT id, parent_id FROM notices WHERE id = ?
@@ -165,10 +176,10 @@ class Model(object):
                   ) SELECT id FROM t3 WHERE parent_id IS NULL
               ) UNION ALL
               SELECT t2.id, t2.parent_id, t2.postdate, t2.closedate,
-               t2.name, t2.message, depth + 1,
+               t2.name, t2.subject, depth + 1,
                path || '/' || CAST(t2.id AS VARCHAR) FROM notices AS t2
                 JOIN tree ON tree.id = t2.parent_id
-             ) SELECT id, postdate, closedate, name, message, depth
+             ) SELECT id, postdate, closedate, name, subject, depth
                FROM tree ORDER BY path'''
         results = self.db.execute(qry_get_thread, (entry,))
         if results is not None:
@@ -180,7 +191,7 @@ class Model(object):
     def close_thread(self, entry):
         '''Mark a entry as "closed" (set a closing date on it)
         '''
-        qry_chk = "SELECT id, name, postdate, message, closedate FROM notices WHERE id=?"
+        qry_chk = "SELECT id, name, postdate, subject, closedate FROM notices WHERE id=?"
         qry_close = "UPDATE notices SET closedate=DATETIME('NOW') WHERE id IN (%s)"
         ## SQLite doesn't parameterize IN sequences
         ## So we'll use this hack courtesy of Alex Martelli:
@@ -201,6 +212,18 @@ class Model(object):
         self.db.commit()
         return 'Thread_%s_closed' % row[0]  ## TODO: implement better return value here
 
+    def get_message(self, entry):
+        '''Get the message contents for a given entry
+        '''
+        qry = 'SELECT message FROM notices WHERE id=?'
+        results = self.db.execute(qry, (entry,))
+        if not results:
+            ## TODO: What should I do here?
+            results='*** No such entry ***'
+        else:
+            results=results.fetchone()[0]
+        return results
+
     def check_schema(self):
         '''Check schema against self
         '''
@@ -210,22 +233,31 @@ class Model(object):
         self.db.commit()
         chk_version = "SELECT version FROM versions WHERE component = 'schema'"
         ver = self.db.execute(chk_version).fetchall()
-        if not ver or ver[0] < Model.schema_version:
-            self.migrate()
+        if not ver:
+            ver = 0
+        else:
+            ver = ver[0][0]
+        if ver  < Model.schema_version:
+            self.migrate(ver)
 
-    def migrate(self):
+    def migrate(self, ver):
         '''Upgrade DB schema
            (Must upgrade this and Model.schema_version for new schema)
+           version is the version currently in the DB
         '''
         add_parent_col = 'ALTER TABLE notices ADD COLUMN parent_id INTEGER'
+        add_subject_col = 'ALTER TABLE notices ADD COLUMN subject TEXT NOT NULL'
         set_new_version = '''INSERT OR REPLACE INTO versions (component, version)
-                             VALUES ('schema', 1)'''
+                             VALUES ('schema', ?)'''
         try:
-            self.db.execute(add_parent_col)
-            self.db.execute(set_new_version)
+            if ver < 1:
+                self.db.execute(add_parent_col)
+            if ver < 2:
+                self.db.execute(add_subject_col)
+            self.db.execute(set_new_version, Model.schema_version)
             self.db.commit()
-        except sqlite3.Error:
-            return False  ## TODO: what do we do here?  Log error?
+        except sqlite3.Error, e:
+            return False, e  ## TODO: what do we do here?  Log error?
         return True
 
 
@@ -279,8 +311,10 @@ def confirm():
     vals = dict()
     vals['title'] = 'Confirmation'
     vals['name'] = request.forms.get('name')
+    vals['subject'] = request.forms.get('subject')
     vals['message'] = request.forms.get('message')
-    vals['id'] = model.create_entry(vals['name'], vals['message'])
+    vals['id'] = model.create_entry(vals['name'], vals['subject'],
+                                    vals['message'])
     return template(HTML_CONFIRMATION, vals)
 
 @route('/thread/<entry:int>')
@@ -292,6 +326,8 @@ def view_thread(entry):
     vals['root_entry'] = entries[0][0]
     vals['title'] = 'View Thread %s' % vals['root_entry']
     vals['width'] = 72
+    vals['id'] = entry
+    vals['message'] = model.get_message(entry)
     return template(VIEW_THREAD, vals)
 
 @route('/static/<file>')

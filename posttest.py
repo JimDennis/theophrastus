@@ -15,7 +15,7 @@ def gen_test_data(num):
     '''Generate a list of {{num}} dictionaries suitable for posting
     '''
     start = time.time()
-    results = [{'name':x.split()[0], 'message':x} for x in get_sentences(num)]
+    results = [{'name':x.split()[0], 'subject':x[:80], 'message':x} for x in get_sentences(num)]
     elapsed = time.time() - start
     return results, elapsed
 

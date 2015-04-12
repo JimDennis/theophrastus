@@ -295,26 +295,24 @@ def view_thread(entry):
     return template(VIEW_THREAD, vals)
 
 @route('/static/<file>')
-def static(file):
-    return static_file(file, root='./static')
+def static(raw_file):
+    '''Return static files
+       Especially CSS, JS and such
+    '''
+    return static_file(raw_file, root='./static')
 
 @route('/login')
-def login():
-    '''Present Login form'''
-    return template(LOGIN_FORM, title='Login', content='')
-
 @post('/login')
 def login():
     '''Process Login and set a cookie'''
-    auth = False
     try:
         name = request.forms.get('name')
         pssd = request.forms.get('pass')
         if name: # No empty names allowed:
-            auth = authenticate(name, pssd)
-    except Exception, e:
-        pass
-    if auth:
+            authorized = authenticate(name, pssd)
+    except Exception:
+        authorized = False
+    if authorized:
         response.set_cookie('session', str(auth))
         return redirect('/')
     return template(LOGIN_FORM, title='Login', content='')

@@ -136,14 +136,14 @@ class Model(object):
         '''
         offset = offset * count
         get_entries = '''
-            WITH RECURSIVE tree (id, parent_id, name, subject, root_id ) AS (
-                SELECT id, parent_id, name, subject, id AS root_id FROM notices
+            WITH RECURSIVE tree (id, parent_id, postdate, name, subject, root_id ) AS (
+                SELECT id, parent_id, postdate, name, subject, id AS root_id FROM notices
                   WHERE parent_id IS NULL AND closedate IS NULL
                 UNION
-                SELECT t1.id, t1.parent_id, t1.name, t1.subject, root_id
+                SELECT t1.id, t1.parent_id, t1.postdate, t1.name, t1.subject, root_id
                   FROM notices AS t1
                   JOIN tree on tree.id = t1.parent_id
-            ) SELECT MAX(id), name, subject FROM tree GROUP BY root_id
+            ) SELECT MAX(id), name, postdate, subject FROM tree GROUP BY root_id
             LIMIT ? OFFSET ?'''
         args = (count, offset)
         current = self.db.execute(get_entries, args)
@@ -219,9 +219,9 @@ class Model(object):
         results = self.db.execute(qry, (entry,))
         if not results:
             ## TODO: What should I do here?
-            results='*** No such entry ***'
+            results = '*** No such entry ***'
         else:
-            results=results.fetchone()[0]
+            results = results.fetchone()[0]
         return results
 
     def check_schema(self):
@@ -237,7 +237,7 @@ class Model(object):
             ver = 0
         else:
             ver = ver[0][0]
-        if ver  < Model.schema_version:
+        if ver < Model.schema_version:
             self.migrate(ver)
 
     def migrate(self, ver):

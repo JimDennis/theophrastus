@@ -25,6 +25,8 @@ class Auth(object):
         self.db.commit()
 
     def authenticate(self, name, prop):
+        '''Check proposed salted SHA1 for password 'prop' for entry 'name'
+        '''
         res = self.db.execute('SELECT pass FROM auth WHERE name=?',
                               (name,))
         row = res.fetchone()

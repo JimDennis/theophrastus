@@ -3,14 +3,20 @@
 '''
 from bottle import debug, post, redirect, request, response, route, run, template, static_file
 import ConfigParser, sqlite3, subprocess, time
+from urllib import quote as urlquote
 
 HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 <body>
 %s
+%%if defined('session') and session is not None:
+  <form action="/logout"
+  method="POST"><input type="submit" value="Logout"/>&nbsp;{{session}}</form>
+%%end
 </body>
 </html>'''
 
 FORM = '''<form action="/confirmation" method="POST">
+Mesage posted from: {{session}}<br />
 Who shall I notify:
 <input type="text" name="name"><br />
 Subject:
@@ -37,6 +43,10 @@ window.location.replace("/")
 HTML_CONFIRMATION = HTML % CONFIRMATION
 
 DOCROOT = '''
+%if defined('alert') and alert:
+<script src="/static/notabene.js?arg={{alert}}"></script>
+<noscript><p>Alert: {{alert}}</p></noscript>
+%end
 <p><h3>Current Notices:</h3></p>
 <table>
 <tr><th>Notice ID</th><th>From</th><th>Date</th><th>Subject</th></tr>
@@ -56,7 +66,6 @@ DOCROOT = '''
 %end
 </table>
 <p><h3>{{!prev}}<a href='/notify'>Send new notification</a>{{!next}}</h3></p>
-{{session}}
 {{!pages}}'''
 
 HTML_ROOT = HTML % DOCROOT
@@ -144,7 +153,7 @@ class Model(object):
                   FROM notices AS t1
                   JOIN tree on tree.id = t1.parent_id
             ) SELECT MAX(id), name, postdate, subject FROM tree GROUP BY root_id
-            LIMIT ? OFFSET ?'''
+            ORDER BY id DESC LIMIT ? OFFSET ?'''
         args = (count, offset)
         current = self.db.execute(get_entries, args)
         pagecount = int(self.get_open_entry_count() / count)
@@ -210,7 +219,7 @@ class Model(object):
             qry = qry_close % ','.join('?'*len(entry_list))
             self.db.execute(qry, entry_list)
         self.db.commit()
-        return 'Thread_%s_closed' % row[0]  ## TODO: implement better return value here
+        return 'Thread closed: %s' % row[0]
 
     def get_message(self, entry):
         '''Get the message contents for a given entry
@@ -269,9 +278,10 @@ def root(page=0):
         page = 0
     vals = dict()
     vals['title'] = 'Notification System'
+    vals['session'] = request.get_cookie('session', None)
     vals['width'] = 72  ## TODO: consolidate this sort of thing
     vals['rows'], pagemax = model.get_open_entries(offset=page)
-    vals['session'] = request.get_cookie('session', '[No Session]')
+    vals['alert'] = request.get_cookie('alert', '')
     if pagemax > 0:
         vals['pages'] = '<p>%s of %s pages</p>' % (page+1, pagemax+1)
     else:
@@ -291,14 +301,22 @@ def root(page=0):
 @route('/notify')
 def notify():
     '''New notification entry form'''
-    return template(HTML_FORM, title='Notify', content='')
+    vals = dict()
+    vals['title'] = 'Notify'
+    vals['session'] = request.get_cookie('session', None)
+    vals['content'] = ''
+    vals['alert'] = ''
+    if not vals['session']:
+        return template(LOGIN_FORM, vals)
+    return template(HTML_FORM, vals)
 
 @post('/close')
 def close():
     '''Set closed date on some entry and return to app/doc root page'''
     entry = request.forms.get('entry')
     result = model.close_thread(entry)
-    return redirect('/?result=%s' % result)
+    response.set_cookie('alert', urlquote(result))
+    return redirect('/')
 
 @route('/confirmation')
 def redir():
@@ -310,11 +328,13 @@ def confirm():
     '''Interstial page to confirm new entry'''
     vals = dict()
     vals['title'] = 'Confirmation'
+    vals['session'] = request.get_cookie('session', None)
     vals['name'] = request.forms.get('name')
     vals['subject'] = request.forms.get('subject')
     vals['message'] = request.forms.get('message')
     vals['id'] = model.create_entry(vals['name'], vals['subject'],
                                     vals['message'])
+    vals['alert'] = ''
     return template(HTML_CONFIRMATION, vals)
 
 @route('/thread/<entry:int>')
@@ -322,15 +342,16 @@ def view_thread(entry):
     '''View thread associated with some entry'''
     entries = model.get_thread_entries(entry)
     vals = dict()
-    vals['rows'] = entries[:]
-    vals['root_entry'] = entries[0][0]
-    vals['title'] = 'View Thread %s' % vals['root_entry']
-    vals['width'] = 72
     vals['id'] = entry
+    vals['width'] = 72
+    vals['root_entry'] = entries[0][0]
+    vals['rows'] = entries[:]
     vals['message'] = model.get_message(entry)
+    vals['title'] = 'View Thread %s' % vals['root_entry']
+    vals['session'] = request.get_cookie('session', None)
     return template(VIEW_THREAD, vals)
 
-@route('/static/<file>')
+@route('/static/<raw_file>')
 def static(raw_file):
     '''Return static files
        Especially CSS, JS and such
@@ -341,6 +362,7 @@ def static(raw_file):
 @post('/login')
 def login():
     '''Process Login and set a cookie'''
+    authorized = False
     try:
         name = request.forms.get('name')
         pssd = request.forms.get('pass')
@@ -349,9 +371,22 @@ def login():
     except Exception:
         authorized = False
     if authorized:
-        response.set_cookie('session', str(auth))
-        return redirect('/')
-    return template(LOGIN_FORM, title='Login', content='')
+        response.set_cookie('session', str(authorized).strip())
+    return redirect('/')
+
+@route('/logout')
+@post('/logout')
+def logout():
+    '''Process Logout: remove 'session' cookie'''
+    session = request.get_cookie('session', None)
+    if session:
+        response.delete_cookie('session')
+        alert = 'Logged out %s' % session
+    else:
+        alert = 'No session active'
+        session = ''
+    response.set_cookie('alert', str(alert))
+    return redirect('/')
 
 
 class Command(object):
@@ -418,7 +453,7 @@ if __name__ == '__main__':
         session_mgr = auth.Auth(read)  # Called with the config file we have loaded
         authenticate = session_mgr.authenticate
     else:
-        print >> sys.stderr, 'Warning: no init() in module %s' % authmod
+        print >> sys.stderr, 'Warning: no Auth() in module %s' % authmod
         authenticate = lambda x, y: False
 
     arguments = sys.argv[1:]

@@ -4,6 +4,7 @@
 from bottle import debug, post, redirect, request, response, route, run, template, static_file
 import ConfigParser, sqlite3, subprocess, time
 from urllib import quote as urlquote
+import socket # to catch socket.error
 
 HTML = '''<!DOCTYPE html><html><head><title>{{title}}</title></head>
 <body>
@@ -421,17 +422,22 @@ class Command(object):
 if __name__ == '__main__':
     import sys, os
 
+    if not sqlite3.sqlite_version_info >= (3, 8, 3):
+        print >> sys.stderr, 'Error: Must use SQLite version >= 3.8.3 for CTE Support'
+        sys.exit(126)
+
     config = ConfigParser.ConfigParser()
     if 'BOTTLECFG' not in os.environ:
-        print >> sys.stderr, 'Warning: no configuration specified in environ'
         ini = './settings.ini'
     else:
         ini = os.environ['BOTTLECFG']
     read = config.read(ini)
     if not read:
         print >> sys.stderr, 'Warning: no configuration read'
+        print >> sys.stderr, 'No ./settings.ini or $BOTTLECFG not accessible'
         sys.exit(127)
-    read = read[0]
+
+    read = read[0]  # TODO: fix this to handle cascading .ini files?
 
     try:
         authmod = config.get('Auth', 'module')
@@ -458,9 +464,14 @@ if __name__ == '__main__':
 
     arguments = sys.argv[1:]
     if not arguments:  # Start service
-        model = Model()
-        debug(True)
-        run(host='localhost', port=8080)
+        try:
+            model = Model()
+            debug(True)
+            run(host='localhost', port=8080)
+        except socket.error, e:
+            if e.errno == 48:
+                print >> sys.stderr, "Something's already running on port 8080"
+                sys.exit(125)
     else:
         command, line = arguments[0], arguments[1:]
         exitval, msg = Command.call(command, *line)
